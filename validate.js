@@ -39,7 +39,7 @@ async function ensureFile(file, content) {
 async function validate() {
   // Validate the global config
   if (!gconfig.domain || !gconfig.secretsdir || !gconfig.datadir || !gconfig.bindir || !gconfig.port) {
-    console.log("Global config is missing required fields: [domain, tls, secretsdir, datadir, bindir]");
+    console.log("Global config is missing required fields: [domain, tls, https, secretsdir, datadir, bindir]");
     return false;
   }
 
@@ -69,17 +69,6 @@ async function validate() {
     return false;
   }
 
-  if (!fs.existsSync(`${gconfig.secretsdir}/keys.js`)) {
-    console.log("keys.js is missing from secretsdir. [discord, internal, jwt, steam, announcech, updatech, reportch]");
-    return false;
-  } else {
-    const keys = require(`${gconfig.secretsdir}/keys.js`);
-    if (!keys.discord || !keys.internal || !keys.jwt || !keys.steam || !keys.announcech || !keys.updatech || !keys.reportch) {
-      console.log("keys.js is missing required fields: [discord, internal, jwt, steam, announcech, updatech, reportch]");
-      return false;
-    }
-  }
-
   if (!fs.existsSync(`${gconfig.secretsdir}/weights.js`)) {
     console.log("weights.js is missing from secretsdir. Dumping default weights...");
     await Bun.write(`${gconfig.secretsdir}/weights.js`, `module.exports = ${JSON.stringify(WEIGHTS, null, 2)};`);
@@ -88,14 +77,15 @@ async function validate() {
 
   // Validate basic datadir structure
 
-  ensureDir(`${__dirname}/.tmp`);
   ensureDir(`${gconfig.datadir}`);
+  ensureDir(`${gconfig.datadir}/.tmp`);
   ensureDir(`${gconfig.datadir}/archives`);
   ensureDir(`${gconfig.datadir}/profiles`);
   ensureDir(`${gconfig.datadir}/spplice`);
   ensureDir(`${gconfig.datadir}/week`);
   ensureDir(`${gconfig.datadir}/week/proof`);
   ensureDir(`${gconfig.datadir}/week/maps`);
+  ensureDir(`${gconfig.datadir}/week/mdp`);
 
   await ensureFile(`${gconfig.datadir}/users.json`, "{}");
   await ensureFile(`${gconfig.datadir}/entgraphs.json`, "{}");
@@ -106,6 +96,22 @@ async function validate() {
   await ensureFile(`${gconfig.datadir}/week/config.json`, `{"categories":[],"votingmaps":[{"id":"140534764"}],"votes":{},"number":0}`);
   await ensureFile(`${gconfig.datadir}/week/leaderboard.json`, "{}");
   await ensureFile(`${gconfig.datadir}/week/week.log`, "");
+  await ensureFile(`${gconfig.datadir}/week/mdp/filesum_whitelist.txt`, "");
+  await ensureFile(`${gconfig.datadir}/week/mdp/sar_whitelist.txt`, "");
+
+  // Validate process environment
+  if (
+      !process.env.STEAM_API_KEY
+      || !process.env.DISCORD_API_KEY
+      || !process.env.JWT_SECRET
+      || !process.env.INTERNAL_SECRET
+      || !process.env.DISCORD_CHANNEL_ANNOUNCE
+      || !process.env.DISCORD_CHANNEL_REPORT
+      || !process.env.DISCORD_CHANNEL_UPDATE
+  ) {
+    console.error("One or more environment variables are missing. Epochtal cannot run unless all necessary variables are present.");
+    return false;
+  }
 
   return true;
 }
@@ -115,7 +121,7 @@ async function validate() {
  *
  * @author PancakeTAS
  */
-async function setup() {
+async function setup () {
 
   const routines = require("./util/routine.js");
   const categories = require("./util/categories.js");
@@ -135,12 +141,17 @@ async function setup() {
   // Delete first archive
   fs.rmSync(`${gconfig.datadir}/archives/week0`, { recursive: true, force: true });
 
+  // Build the Epochtal Live package
+  await routines(["run", "live", "rebuildPackage"]);
+
+  // Create first run file
+  await Bun.write(`${gconfig.datadir}/.first-run`, "");
 }
 
 module.exports = {
   validate,
   setup
-}
+};
 
 // default weights
 const WEIGHTS = {

@@ -3,7 +3,6 @@ const UtilError = require("./error.js");
 const { $ } = require("bun");
 const fs = require("node:fs");
 const tmppath = require("./tmppath.js");
-const discord = require("./discord.js");
 const testcvar = require("./testcvar.js");
 
 /**
@@ -15,7 +14,7 @@ const testcvar = require("./testcvar.js");
  */
 function extendFilePath (file) {
   if (!fs.existsSync(file)) {
-    return `${gconfig.datadir}/proof/${file}`;
+    return `${gconfig.datadir}/week/proof/${file}`;
   }
   return file;
 }
@@ -90,18 +89,21 @@ async function parseDump (file) {
  * @param {string} file Path to the file to parse
  * @returns {object} Parsed demo data
  */
-async function parseMDP (file) {
+async function parseMDP (file, context) {
 
   // Make sure file is decompressed
   const originalFile = file;
   if (file.endsWith(".dem.xz")) file = await decompressXZ(file);
 
+  // Get SAR and file checksum list paths from context
+  const { filesums, sarsums } = context.file.mdp;
+
   // Parse the demo into json
-  const text = (await $`cd ${`${gconfig.bindir}/mdp-json`} && ./mdp ${file}`.text()).replaceAll("\\", "\\\\");
-  const output = JSON.parse(text);
+  const stdout = await $`cd "${gconfig.bindir}/mdp-json" && ./mdp "${file}" --filesum-path "${filesums}" --sarsum-path "${sarsums}"`.text();
+  const json = JSON.parse(stdout.replaceAll("\\", "\\\\"));
   if (originalFile !== file) fs.unlinkSync(file);
 
-  return output;
+  return json;
 
 }
 
@@ -152,24 +154,28 @@ module.exports = async function (args, context = epochtal) {
       if (!fs.existsSync(path)) throw new UtilError("ERR_FILE", args, context);
 
       // Parse the demo file using mdp
-      return await parseMDP(path);
+      return await parseMDP(path, context);
 
     }
 
     case "parse": {
+
+      // If set, counts uses of a console command instead of portals fired
+      const portalOverride = args[2];
 
       // Extend demo file path if it is not already an absolute path
       const path = extendFilePath(file);
       if (!fs.existsSync(path)) throw new UtilError("ERR_FILE", args, context);
 
       // Fully parse the demo file
-      const mdp = await parseMDP(path);
+      const mdp = await parseMDP(path, context);
       const dump = await parseDump(path);
 
       // Extract the time and portal count from the demo
       const output = {
         ...dump,
-        time: null,
+        time: mdp.demos[0].ticks,
+        timer: false,
         portals: 0
       };
 
@@ -178,12 +184,20 @@ module.exports = async function (args, context = epochtal) {
 
         if (event.type === "speedrun") {
           output.time = event.value.total.ticks;
+          output.timer = true;
           continue;
         }
 
-        if (event.type === "portal") {
-          output.portals ++;
+        if (portalOverride) {
+          if (event.type === "cmd" && event.value.split(" ")[0].toLowerCase() === portalOverride) {
+            output.portals ++;
+          }
+        } else {
+          if (event.type === "portal") {
+            output.portals ++;
+          }
         }
+
 
       }
 
@@ -201,7 +215,7 @@ module.exports = async function (args, context = epochtal) {
       if (!fs.existsSync(path)) throw new UtilError("ERR_FILE", args, context);
 
       // Parse the demo file using mdp
-      const mdp = await parseMDP(path);
+      const mdp = await parseMDP(path, context);
 
       // Ensure tickrate is correct
       if (Math.abs(mdp.demos[0].tps - 60.00) > 0.01) {
@@ -209,87 +223,99 @@ module.exports = async function (args, context = epochtal) {
       }
 
       let ppnf = false, sv_cheats = false;
-      let lastTimestamp = null;
-      let timescale = [], timescaleTotal = 0;
+      let lastTimestamp = null, speedrunTimer = null;
+      const timestampNow = Date.now();
 
       for (const event of mdp.demos[0].events) {
+        switch (event.type) {
 
-        // Ensure demo is submitted within the expiry time
-        if (event.type === "timestamp") {
-          if (Date.now() - Date.parse(event.value) > EXPIRY_TIME) {
-            return `Demo was recorded more than 1h ago, according to system clock.`;
-          }
-          continue;
-        }
+          // Ensure demo is submitted within the expiry time
+          case "timestamp": {
 
-        // Ensure all significant files passed the validation check
-        if (event.type === "file") {
-          const path = event.value.path.toLowerCase();
-          if (
-            path.includes("/common/portal 2/portal2_tempcontent/") ||
-            path.includes("/common/portal 2/update/")
-          ) {
-            return `Significant file \`${event.value.path}\` has mismatched checksum \`${event.value.sum}\`.`;
-          }
-          continue;
-        }
-
-        // Ensure no sar or demo mismatches are present
-        if (event.type === "sarsum") {
-          return `SAR checksum mismatch, got \`${event.value}\`.`;
-        }
-        if (event.type === "demosum") {
-          return `Demo checksum mismatch.`;
-        }
-
-        // Handle console commands and cvars
-        if (event.type === "cvar" || event.type === "cmd") {
-
-          const cvar = (event.type === "cvar" ? event.val.cvar : event.value.split(" ")[0]).trim().toLowerCase();
-          const value = event.type === "cvar" ? event.val.val : event.value.split(" ").slice(1).join(" ");
-
-          // Ensure the demo is on the correct map
-          if (cvar === "host_map") {
-            const expected = context.data.week.map.file + ".bsp";
-            if (value !== expected) {
-              return `Host map path incorrect. Expected \`${expected}\`, got \`${event.val.val}\`.`;
+            if (timestampNow - Date.parse(event.value) > EXPIRY_TIME) {
+              return `Demo was recorded more than 1h ago, according to system clock.`;
             }
+            break;
+
           }
 
-          // Check for server clock timestamps
-          if (cvar === "-alt1" && value.startsWith("ServerTimestamp")) {
-            const timestamp = parseInt(value.slice(16));
-            if (timestamp) lastTimestamp = timestamp;
-          }
+          // Ensure all significant files passed the validation check
+          case "file": {
 
-          // Keep track of the value of sv_cheats
-          if (cvar === "sv_cheats") {
-            if (!value || value == "0") sv_cheats = false;
-            else sv_cheats = true;
-          }
-
-          // Ensure the demo is not using illegal commands
-          const verdict = await testcvar([cvar, value, sv_cheats], context);
-
-          if (verdict === VERDICT_ILLEGAL) {
-            if (cvar.trim().toLowerCase() === "sv_portal_placement_never_fail") {
-              ppnf = true;
-              continue;
+            const path = event.value.path.toLowerCase();
+            if (
+              path.includes("/common/portal 2/portal2_tempcontent/") ||
+              path.includes("/common/portal 2/update/")
+            ) {
+              return `Significant file \`${event.value.path}\` has mismatched checksum \`${event.value.sum}\`.`;
             }
-            return `Illegal command: \`${cvar}${value !== "" ? " " + value : ""}\``;
+            break;
+
+          }
+
+          // Ensure no sar or demo mismatches are present
+          case "sarsum": return `SAR checksum mismatch, got \`${event.value}\`.`;
+          case "demosum": return `Demo checksum mismatch.`;
+
+          // Handle console commands and cvars
+          case "cvar":
+          case "cmd": {
+
+            const cvar = (event.type === "cvar" ? event.val.cvar : event.value.split(" ")[0]).trim().toLowerCase();
+            const value = event.type === "cvar" ? event.val.val : event.value.split(" ").slice(1).join(" ");
+
+            // Ensure the demo is on the correct map
+            if (cvar === "host_map") {
+              const expected = context.data.week.map.file + ".bsp";
+              if (value !== expected) {
+                return `Host map path incorrect. Expected \`${expected}\`, got \`${event.val.val}\`.`;
+              }
+            }
+
+            // Check for server clock timestamps
+            if (cvar === "-alt1" && value.startsWith("ServerTimestamp")) {
+              const timestamp = parseInt(value.slice(16));
+              if (timestamp) lastTimestamp = timestamp;
+            }
+
+            // Keep track of the value of sv_cheats
+            if (cvar === "sv_cheats") {
+              if (!value || value == "0") sv_cheats = false;
+              else sv_cheats = true;
+            }
+
+            // Ensure the demo is not using illegal commands
+            const verdict = await testcvar([cvar, value, sv_cheats], context);
+
+            if (verdict === VERDICT_ILLEGAL) {
+              if (cvar.trim().toLowerCase() === "sv_portal_placement_never_fail") {
+                ppnf = true;
+                break;
+              }
+              return `Illegal command: \`${cvar}${value !== "" ? " " + value : ""}\``;
+            }
+
+            break;
+
+          }
+
+          // Look for speedrun timer output
+          case "speedrun": {
+            speedrunTimer = event.value.total.ticks;
+            break;
           }
 
         }
-
       }
 
       if (lastTimestamp === null) return "Server timestamp not found.";
+      if (speedrunTimer === null) return "Speedrun timer not stopped.";
 
-      if (Date.now() - lastTimestamp > EXPIRY_TIME) {
+      if (timestampNow - lastTimestamp > EXPIRY_TIME) {
         return `Demo was recorded more than 1h ago, according to server clock.`;
       }
-      if (lastTimestamp > Date.now()) {
-        return `Demo was recorded in the future, server timestamp is \`${timestamp}\`.`;
+      if (lastTimestamp > timestampNow) {
+        return `Demo was recorded in the future, server timestamp is \`${lastTimestamp}\`.`;
       }
 
       if (ppnf) return "PPNF";

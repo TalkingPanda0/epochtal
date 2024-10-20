@@ -1,12 +1,7 @@
 const UtilError = require("./error.js");
-const UtilPrint = require("./print.js");
-
-const fs = require("node:fs");
-
-const leaderboard = require("./leaderboard.js");
+const weeklog = require("./weeklog.js");
 const categories = require("./categories.js");
 const archive = require("./archive.js");
-const profilelog = require("./profilelog.js");
 const profiledata = require("./profiledata.js");
 
 const [ WIN, LOSS, DRAW ] = [1, -1, 0];
@@ -148,24 +143,62 @@ async function pointsFromSteamID (steamid, context = epochtal) {
  */
 async function calculatePointsDelta (context = epochtal) {
 
-  const users = context.data.users;
-  const boards = await leaderboard(["list"], context);
+  // Get all final leaderboards
+  const allBoards = context.data.leaderboard;
+  // Get a reconstruction of the week log as a leaderboard
+  const reconstructed = await weeklog(["reconstruct"], context);
+
   const catlist = await categories(["list"], context);
   const partners = context.data.week.partners;
   const catDeltaElo = {};
 
-  // For each board (category with at least 1 run)
-  for (let i = 0; i < boards.length; i ++) {
+  // For all categories with at least one submission
+  for (const catname in allBoards) {
 
     // Ensure the category is in the list of active categories at the conclusion of the week
-    const catname = boards[i];
     if (!catlist.includes(catname)) continue;
 
     // Ensure the category is scored
     const cat = await categories(["get", catname], context);
     if (!cat.points) continue;
 
-    const lb = await leaderboard(["get", catname], context);
+    // Perform a deep copy of the relevant leaderboard
+    const lb = structuredClone(allBoards[catname]);
+
+    // Add any player-removed runs back to the cloned leaderboard
+    for (const run of reconstructed[catname]) {
+      const steamid = run.steamid;
+
+      // Check if this runner (or pair) is missing from the final leaderboard
+      const exists = allBoards[catname].some(curr => {
+        if (curr.steamid === steamid || curr.partner === steamid) return true;
+        if (cat.coop && partners && partners[curr.steamid] === steamid) return true;
+        return false;
+      });
+      if (exists) continue;
+
+      let insert = null;
+
+      for (let i = 0; i < lb.length; i ++) {
+        if (cat.portals) {
+          // This will treat all deleted LP runs as segmented. It's not an ideal solution, but
+          // there's no such flag in log entries. Arguably, a punishment for removing the run.
+          if (lb[i].portals > run.portals || (lb[i].segmented && lb[i].portals === run.portals && lb[i].time > run.time)) {
+            insert = i;
+            break;
+          }
+        } else if (lb[i].time > run.time) {
+          insert = i;
+          break;
+        }
+      }
+
+      // Insert the run in the sorted position, *unless it's a world record*
+      // If you're deleting a WR, chances are it's an accidental submission
+      if (insert === null) lb.push(run);
+      else if (insert !== 0) lb.splice(insert, 0, run);
+
+    }
 
     catDeltaElo[catname] = {};
     const deltaElo = catDeltaElo[catname];

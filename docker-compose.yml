@@ -1,0 +1,25 @@
+services:
+  epochtal:
+    image: ghcr.io/p2r3/epochtal:latest
+    ports:
+      - 8080:8080/tcp
+    # Use environment values from the .env file.
+    # If you don't want this, comment the following line and use the individual environment variables below instead.
+    env_file: '.env'
+    #environment:
+    #  STEAM_API_KEY:
+    #  DISCORD_API_KEY:
+    #  JWT_SECRET:
+    #  INTERNAL_SECRET:
+    #  DISCORD_CHANNEL_ANNOUNCE:
+    #  DISCORD_CHANNEL_REPORT:
+    #  DISCORD_CHANNEL_UPDATE:
+    #  WEB_URL: # This is optional
+    #  USE_TLS: # This is optional
+    #  USE_HTTPS: # This is optional
+    volumes:
+      # You can bind the data directory of epochtal to your host (recommended).
+      # Comment out the following line if you don't want that.
+      - ./data:/app/data
+      # You can also bind the 'secrets' directory to your host. This contains SSL certificates (if used) and curation weights
+      #- ./secrets:/app/secrets

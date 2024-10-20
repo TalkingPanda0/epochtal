@@ -222,7 +222,12 @@
       });
 
       const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
-      const utilPrintSocket = new WebSocket(`${protocol}://${window.location.host}/ws/utilPrint`);
+      const utilPrintSocket = new WebSocket(`${protocol}://${window.location.host}/api/events/connect`);
+
+      utilPrintSocket.onopen = async function (event) {
+        const token = await (await fetch("/api/events/auth/utilPrint")).json();
+        utilPrintSocket.send(token);
+      };
 
       utilPrintSocket.addEventListener("message", function (event) {
 
@@ -232,6 +237,12 @@
         lines[0] = `<span class=\"grayed\">${lines[0]}</span>`;
 
         output.innerHTML += lines.join("<br>");
+
+      });
+
+      utilPrintSocket.addEventListener("close", function (event) {
+
+        output.innerHTML += `Server closed utilPrint event with code ${event.code} and reason ${event.reason}.<br>`;
 
       });
 

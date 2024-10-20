@@ -1,5 +1,6 @@
 const UtilError = require("./error.js");
-const UtilPrint = require("./print.js");
+
+const fs = require("node:fs");
 
 /**
  * Handles the `profiledata` utility call. This is used to get or modify a user's profile data.
@@ -85,7 +86,7 @@ module.exports = async function (args, context = epochtal) {
 
       if (profilesPath) {
         const dataPath = `${profilesPath}/${steamid}/data.json`;
-        await Bun.write(dataPath, JSON.stringify(profile));
+        if (fs.existsSync(dataPath)) await fs.unlinkSync(dataPath);
       }
 
       return "SUCCESS";

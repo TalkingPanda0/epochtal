@@ -32,7 +32,7 @@ var smoothScroll = function (queryString) {
  */
 function sanitizeStringJS (str) {
   return (
-    str.replaceAll("<", "&lt;")
+    str.toString().replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
     .replaceAll("&", "&amp;")
     .replaceAll('"', "&quot;")
@@ -51,7 +51,7 @@ function sanitizeStringJS (str) {
  */
 function sanitizeStringHTML (str) {
   return (
-    str.replaceAll("<", "&lt;")
+    str.toString().replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
     .replaceAll("&", "&amp;")
   );
@@ -106,6 +106,45 @@ var homepageInit = async function () {
 
   }
   updateActiveMap();
+
+  const leaderboardCountdown = document.querySelector("#leaderboard-countdown");
+
+  /**
+   * Updates the leaderboard countdown every minute
+   */
+  function updateLeaderboardCountdown () {
+
+    // The time for which the leaderboard is open, in seconds
+    const activeTime = 529200;
+    // The time for which the leaderboard is locked, in seconds
+    const lockedTime = 75600;
+
+    // Get the current time
+    const now = new Date();
+    // Get the start of the week, floored to the nearest hour
+    const start = new Date(config.date * 1000);
+    const startHour = new Date(start.getFullYear(), start.getMonth(), start.getDate(), start.getHours());
+    // Get the time at which the week ends
+    const end = Number(startHour) + activeTime * 1000;
+
+    // Calculate how long (in minutes) until the week ends
+    let mins = (end - now) / 1000 / 60;
+
+    let output = "";
+
+    if (!config.voting) {
+      mins += lockedTime / 60;
+      if (mins > 0) output += `Leaderboards reopen in ${Math.floor(mins / 60 / 24)}d ${Math.floor(mins / 60 % 24)}h ${Math.floor(mins % 60)}m`;
+      else output = "Leaderboards locked";
+    } else {
+      output = `Leaderboards lock in ${Math.floor(mins / 60 / 24)}d ${Math.floor(mins / 60 % 24)}h ${Math.floor(mins % 60)}m`;
+    }
+
+    leaderboardCountdown.textContent = output;
+
+  }
+  updateLeaderboardCountdown();
+  setInterval(updateLeaderboardCountdown, 60000);
 
   const leaderboardCategorySelect = document.querySelector("#leaderboard-category-select");
   const leaderboardArchiveSelect = document.querySelector("#leaderboard-archive-select");
@@ -198,7 +237,8 @@ var homepageInit = async function () {
         } catch (e) { } // Too bad ¯\_(ツ)_/¯
       }
 
-      const portalCount = ("portals" in run && categoryData.portals) ? `, ${run.portals} portal${run.portals === 1 ? "" : "s"}` : "";
+      const portalLabel = categoryData.portals && (categoryData.portals === true ? "portal" : categoryData.portals);
+      const portalCount = ("portals" in run && categoryData.portals) ? `, ${run.portals} ${portalLabel}${run.portals === 1 ? "" : "s"}` : "";
 
       const suffix = ["st","nd","rd"][((placement + 90) % 100 - 10) % 10 - 1] || "th"; // what the fuck
 
@@ -304,7 +344,9 @@ var homepageInit = async function () {
 
     const run = leaderboard[category].find(curr => curr.steamid === whoami.steamid);
 
-    showPopup("Edit run comment", `<textarea id="edit-note" cols="25" rows="3" placeholder="no comment">${sanitizeStringJS(run.note)}</textarea>`, POPUP_INFO, true);
+    showPopup("Edit run comment", `<textarea id="edit-note" cols="25" rows="3" placeholder="no comment"></textarea>`, POPUP_INFO, true);
+
+    document.querySelector("#edit-note").textContent = run.note;
 
     popupOnOkay = async function () {
 

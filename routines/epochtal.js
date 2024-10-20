@@ -45,29 +45,33 @@ async function concludeWeek (context) {
   // Create a summary of all suspicious demo events
   const { summary, timescales } = await summarizeDemoEvents(context);
 
-  let textSummary = "## [ Demo event summary ]\n";
+  let textSummary = "## Demo event summary\n";
   for (let i = 0; i < summary.length; i ++) {
-    textSummary += `\`${summary[i].cvar}\` in ${summary[i].count} demo${summary[i].count === 1 ? "" : "s"}: \`\`\`json\n${JSON.stringify(summary[i].demos)}\`\`\`\n`;
+    textSummary += `\`${summary[i].cvar}\` in ${summary[i].count} demo${summary[i].count === 1 ? "" : "s"}:\n- \`${summary[i].demos.join("`\n- `")}\`\n\n`;
   }
   if (summary.length === 0) textSummary += "*All demos clean, nothing to report.*";
 
-  let textTimescales = "## [ Demo timescale summary ]\n";
+  let textTimescales = "## Demo timescale summary\n";
   for (let i = 0; i < timescales.length; i ++) {
-    textTimescales += `\`${timescales[i].average.toFixed(5)}\` average in \`${timescales[i].demo}\`:\`\`\`json\n${JSON.stringify(timescales[i].array)}\`\`\`\n`;
+    textTimescales += `\`${timescales[i].average.toFixed(5)}\` average in \`${timescales[i].demo}\`:\n- \`${timescales[i].array.join(", ")}\`\n\n`;
   }
   if (timescales.length === 0) textTimescales += "*All demos clean, nothing to report.*";
 
-  // Print report to console
+  // Print report to console and save it to file
   const finalReportText = `${textSummary}\n${textTimescales}`;
   UtilPrint("epochtal(concludeWeek):\n" + finalReportText);
+
+  const finalReportPath = (await tmppath()) + ".md";
+  await Bun.write(finalReportPath, finalReportText);
 
   // Report the summary including the demo files on Discord
   const demoTarPath = (await tmppath()) + ".tar";
   await $`tar -cf ${demoTarPath} -C ${context.file.demos} .`.quiet();
 
   try {
-    await discord(["report", finalReportText, [demoTarPath]], context);
+    await discord(["report", `Week ${week.number} demo report summary:`, [finalReportPath, demoTarPath]], context);
   } finally {
+    fs.unlinkSync(finalReportPath);
     fs.unlinkSync(demoTarPath);
   }
 
@@ -264,8 +268,6 @@ async function releaseMap (context) {
     }
 
     fs.renameSync(vmf, `${context.file.vmfs}/${context.data.week.map.id}.vmf.xz`);
-
-    context.data.week.map.file = portal2.map[0];
 
   } catch (e) {
 
@@ -559,7 +561,7 @@ async function summarizeDemoEvents (context) {
   return {
     summary: sortedSummary,
     timescales: sortedTimescales
-  }
+  };
 
 }
 

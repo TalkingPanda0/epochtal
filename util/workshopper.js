@@ -1,7 +1,6 @@
 const UtilError = require("./error.js");
 
 const curator = require("./curator.js");
-const keys = require(`${gconfig.secretsdir}/keys.js`);
 
 const STEAM_API = "https://api.steampowered.com";
 
@@ -15,7 +14,7 @@ const STEAM_API = "https://api.steampowered.com";
 async function getData (mapid, raw) {
 
   // Fetch the map details
-  const detailsRequest = await fetch(`${STEAM_API}/IPublishedFileService/GetDetails/v1/?key=${keys.steam}&publishedfileids[0]=${mapid}&includeadditionalpreviews=true`);
+  const detailsRequest = await fetch(`${STEAM_API}/IPublishedFileService/GetDetails/v1/?key=${process.env.STEAM_API_KEY}&publishedfileids[0]=${mapid}&includeadditionalpreviews=true`);
   if (detailsRequest.status !== 200) return "ERR_STEAMAPI";
 
   // Ensure the response is valid
@@ -29,7 +28,7 @@ async function getData (mapid, raw) {
   if (raw) return details;
 
   // Fetch the author details
-  const authorRequest = await fetch(`${STEAM_API}/ISteamUser/GetPlayerSummaries/v2/?key=${keys.steam}&steamids=${details.creator}`);
+  const authorRequest = await fetch(`${STEAM_API}/ISteamUser/GetPlayerSummaries/v2/?key=${process.env.STEAM_API_KEY}&steamids=${details.creator}`);
   if (authorRequest.status !== 200) return "ERR_STEAMAPI";
 
   // Ensure the response is valid
@@ -45,12 +44,17 @@ async function getData (mapid, raw) {
     if (preview) screenshot = preview.url;
   }
 
+  // Extract components of the path to which the map is saved when subscribed to
+  const pathWorkshop = details.file_url.split("/ugc/").pop().split("/")[0];
+  const pathBSP = details.filename.split("/").pop().slice(0, -4);
+
   return {
     id: mapid,
     title: details.title,
     author: author.personaname,
     thumbnail: details.preview_url.split("https://steamuserimages-a.akamaihd.net/ugc/")[1] || details.preview_url,
-    screenshot: screenshot.split("https://steamuserimages-a.akamaihd.net/ugc/")[1] || screenshot
+    screenshot: screenshot.split("https://steamuserimages-a.akamaihd.net/ugc/")[1] || screenshot,
+    file: `workshop/${pathWorkshop}/${pathBSP}`
   };
 
 }
@@ -64,7 +68,7 @@ async function getData (mapid, raw) {
 async function curateWorkshop (maps = []) {
 
   // Super long workshop API query requesting pretty much everything you can
-  const requestData = `${STEAM_API}/IPublishedFileService/QueryFiles/v1/?key=${keys.steam}&query_type=1&numperpage=100&appid=620&requiredtags=Singleplayer&match_all_tags=true&filetype=0&return_vote_data=false&return_tags=true&return_kv_tags=true&return_previews=true&return_children=true&return_short_description=false&return_for_sale_data=false&return_metadata=true&return_playtime_stats=false`;
+  const requestData = `${STEAM_API}/IPublishedFileService/QueryFiles/v1/?key=${process.env.STEAM_API_KEY}&query_type=1&numperpage=100&appid=620&requiredtags=Singleplayer&match_all_tags=true&filetype=0&return_vote_data=false&return_tags=true&return_kv_tags=true&return_previews=true&return_children=true&return_short_description=false&return_for_sale_data=false&return_metadata=true&return_playtime_stats=false`;
 
   const weekSeconds = 604800; // one week
   const startDate = Date.now() / 1000;
@@ -76,7 +80,6 @@ async function curateWorkshop (maps = []) {
   while (startDate - lastDate < weekSeconds) {
 
     // Fetch page of workshop data
-    const request = await fetch(`${requestData}&page=${page}`);
     const response = (await (await fetch(`${requestData}&page=${page++}`)).json()).response;
     const results = response.publishedfiledetails;
 
@@ -167,7 +170,7 @@ module.exports = async function (args, context = epochtal) {
     case "get": {
 
       // Ensure the mapid is valid
-      if (!mapid) throw new UtilError("ERR_MAPID", args, context);
+      if (!mapid || isNaN(mapid)) throw new UtilError("ERR_MAPID", args, context);
       const raw = args[2];
 
       // Fetch the map data

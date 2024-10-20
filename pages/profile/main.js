@@ -113,7 +113,7 @@ var profilePageInit = async function () {
     if (request.status === 200) {
       const buffer = new Uint8Array(await request.arrayBuffer());
       profileLog = decodeLog(buffer, profileUserData.categories);
-    } else if (request.status === 404) {
+    } else if (request.status === 204) {
       profileLog = [];
     } else {
       return showPopup("Unknown error", "An unexpected error occurred while fetching the profile log. Check the JavaScript console for more info.", POPUP_ERROR);
@@ -122,7 +122,7 @@ var profilePageInit = async function () {
     // Parse the profile log into leaderboards
     for (let i = 0; i < profileLog.length; i ++) {
 
-      const week = Math.floor(profileLog[i].timestamp / 604800) + 1;
+      const week = Math.floor(profileLog[i].timestamp / 604800);
       const category = profileLog[i].category;
 
       if (!(week in leaderboards)) leaderboards[week] = {};
@@ -140,9 +140,6 @@ var profilePageInit = async function () {
         });
       }
     }
-
-    // > I have no idea if I documented this correctly
-    // - PancakeTAS
 
   }
   await fetchProfileLog();
@@ -224,10 +221,10 @@ var profilePageInit = async function () {
           if (weeknum > last) last = weeknum;
         }
 
-        data = new Array(last).fill(0);
+        data = new Array(Math.max(last, 0)).fill(0);
 
         // For each week, count the number of submissions
-        for (let i = first - 1; i < last; i ++) {
+        for (let i = first - 1; i <= last; i ++) {
 
           if (!(i in leaderboards)) continue;
 

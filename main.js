@@ -1,14 +1,18 @@
 const fs = require("node:fs");
 const path = require("node:path");
 
+// Get environment variables from .env file
+require("dotenv").config();
+
 // Ensure main config exists
 const gconfigpath = `${__dirname}/config.json`;
 if (!fs.existsSync(gconfigpath)) {
   console.log("No global config file found. Deploying default config...");
   await Bun.write(gconfigpath, JSON.stringify({
-    domain: "localhost:8080",
+    domain: process.env.WEB_URL || "localhost:8080",
     port: 8080,
-    tls: false,
+    tls: process.env.USE_TLS === "true",
+    https: process.env.USE_HTTPS === "true",
     secretsdir: `${__dirname}/secrets`,
     datadir: `${__dirname}/data`,
     bindir: `${__dirname}/bin`
@@ -16,8 +20,8 @@ if (!fs.existsSync(gconfigpath)) {
 }
 
 // Load the global config
-var gconfig = await Bun.file(gconfigpath).json();
-global.isFirstLaunch = !fs.existsSync(gconfig.datadir);
+const gconfig = await Bun.file(gconfigpath).json();
+global.isFirstLaunch = !fs.existsSync(`${gconfig.datadir}/.first-run`);
 global.gconfig = gconfig;
 
 // Validate the global config
@@ -56,10 +60,12 @@ epochtal.file = {
   spplice: {
     repository: `${gconfig.datadir}/spplice`,
     index: Bun.file(`${gconfig.datadir}/spplice/index.json`)
+  },
+  mdp: {
+    filesums: `${gconfig.datadir}/week/mdp/filesum_whitelist.txt`,
+    sarsums: `${gconfig.datadir}/week/mdp/sar_whitelist.txt`
   }
 };
-
-const keys = require(`${gconfig.secretsdir}/keys.js`);
 
 // Parse data from files and load it into the global context
 epochtal.data = {
@@ -68,17 +74,18 @@ epochtal.data = {
   profiles: {},
   week: await epochtal.file.week.json(),
   discord: {
-    announce: keys.announcech,
-    report: keys.reportch,
-    update: keys.updatech
+    announce: process.env.DISCORD_CHANNEL_ANNOUNCE,
+    report: process.env.DISCORD_CHANNEL_REPORT,
+    update: process.env.DISCORD_CHANNEL_UPDATE
   },
   spplice: {
-    address: `${gconfig.tls ? "https" : "http"}://${gconfig.domain}`,
+    address: `${gconfig.https ? "https" : "http"}://${gconfig.domain}`,
     index: await epochtal.file.spplice.index.json()
   },
   // Epochtal Live
   lobbies: { list: {}, data: {} },
-  events: {}
+  events: {},
+  gameauth: {}
 };
 
 // Import dependencies for Discord integration
@@ -96,7 +103,7 @@ global.discordClient = new Discord.Client({
 });
 
 // Log in to the Discord client and set its state
-discordClient.login(keys.discord);
+discordClient.login(process.env.DISCORD_API_KEY);
 discordClient.once("ready", function () {
   discordClient.user.setActivity("Portal 2", { type: 5 });
 });
@@ -157,28 +164,6 @@ const fetchHandler = async function (req) {
   const urlPath = url.pathname.split("/").slice(1);
   const userAgent = req.headers.get("User-Agent");
 
-  // Handle WebSocket connections
-  if (urlPath[0] === "ws") {
-
-    // Make sure the user is logged in
-    const user = await apis.users(["whoami"], req);
-    if (!user) return Response("ERR_LOGIN", { status: 403 });
-
-    // Decode the event from the URL
-    const steamid = user.steamid;
-    const event = decodeURIComponent(urlPath[1]);
-    const eventData = epochtal.data.events[event];
-
-    // Ensure event is valid and user has permission to access it
-    if (!eventData) return Response("ERR_EVENT", { status: 404 });
-    if (!(await eventData.auth(steamid))) return Response("ERR_PERMS", { status: 403 });
-
-    // Upgrade the connection to a WebSocket
-    if (server.upgrade(req, { data: { event, steamid } })) return;
-    return new Response("ERR_PROTOCOL", { status: 500 });
-
-  }
-
   // Handle API calls
   if (urlPath[0] === "api") {
 
@@ -191,7 +176,7 @@ const fetchHandler = async function (req) {
     for (let i = 0; i < args.length; i ++) {
       try {
         args[i] = JSON.parse(args[i]);
-      } catch (e) { } // Leave it as a string
+      } catch { } // Leave it as a string
     }
 
     // Try to call the previously defined API with the parsed arguments, catching any errors if it fails
@@ -239,7 +224,7 @@ const fetchHandler = async function (req) {
     for (let i = 0; i < args.length; i ++) {
       try {
         args[i] = JSON.parse(args[i]);
-      } catch (e) { } // Leave it as a string
+      } catch { } // Leave it as a string
     }
 
     // Try to call the utility with the provided arguments

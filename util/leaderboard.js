@@ -4,6 +4,24 @@ const categories = require("./categories.js");
 const weeklog = require("./weeklog.js");
 
 /**
+ * Adds a placement index to each run.
+ * @param {object[]} lb An array of runs representing the leaderboard
+ */
+function calculatePlacement (lb) {
+
+  let placement = 1;
+  for (let i = 0; i < lb.length; i ++) {
+
+    if (i !== 0 && lb[i].time !== lb[i-1].time) {
+      placement ++;
+    }
+    lb[i].placement = placement;
+
+  }
+
+};
+
+/**
  * Handles the `leaderboard` utility call. Manages the leaderboard for a given category.
  *
  * The following subcommands are available:
@@ -47,30 +65,17 @@ module.exports = async function (args, context = epochtal) {
 
     case "get": {
 
-      let output = [];
-
       if (lb === undefined) throw new UtilError("ERR_CATEGORY", args, context);
-
-      // Add placement to each run
-      let placement = 1;
-      for (let i = 0; i < lb.length; i ++) {
-
-        if (i !== 0 && lb[i].time !== lb[i-1].time) {
-          placement ++;
-        }
-        lb[i].placement = placement;
-
-        output.push(lb[i]);
-
-      }
-
-      return output;
+      return lb;
 
     }
 
     case "remove": {
 
       if (lb === undefined) throw new UtilError("ERR_CATEGORY", args, context);
+
+      // Whether the run should be purged from the weeklog (true by default)
+      const purge = args[3] === undefined ? true : args[3];
 
       // Find the run to remove
       const idx = lb.findIndex(function (curr) {
@@ -79,12 +84,17 @@ module.exports = async function (args, context = epochtal) {
 
       if (idx === -1) throw new UtilError("ERR_NOTFOUND", args, context);
 
-      // Remove the run from the leaderboard and write the changes
-      data[category].splice(idx, 1);
+      // Remove the run from the leaderboard
+      lb.splice(idx, 1);
+
+      // Recalculate placement indices
+      calculatePlacement(lb);
+
+      // Write the changes to file
       if (file) Bun.write(file, JSON.stringify(data));
 
       // Log the removal
-      await weeklog(["add", steamid, category, 0, 0], context);
+      await weeklog(["add", steamid, category, 0, purge ? 1 : 0], context);
 
       return "SUCCESS";
 
@@ -130,7 +140,11 @@ module.exports = async function (args, context = epochtal) {
       if (oldRunIndex !== -1) lb.splice(oldRunIndex, 1);
 
       // Insert the new run into the leaderboard
-      const newRun = { steamid, time, note };
+      const newRun = {
+        steamid: steamid.toString(),
+        time: Number(time),
+        note: note.toString()
+      };
 
       let inserted = false;
 
@@ -172,6 +186,9 @@ module.exports = async function (args, context = epochtal) {
 
       if (!inserted) lb.push(newRun);
 
+      // Recalculate placement indices
+      calculatePlacement(lb);
+
       // Write the changes to the leaderboard
       if (file) Bun.write(file, JSON.stringify(data));
 
@@ -203,8 +220,9 @@ module.exports = async function (args, context = epochtal) {
 
     }
 
-    throw new UtilError("ERR_COMMAND", args, context);
 
   }
+
+  throw new UtilError("ERR_COMMAND", args, context);
 
 };

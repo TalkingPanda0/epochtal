@@ -3,17 +3,16 @@ const UtilError = require("./error.js");
 const { appendFileSync } = require("node:fs");
 const categories = require("./categories.js");
 const config = require("./config.js");
-const archive = require("./archive.js");
-const users = require("./users.js");
 
 /**
  * Parses a weeklog buffer into an array of objects
  *
  * @param {Uint8Array} buffer Buffer containing weeklog data
  * @param {string[]} categoryList  List of categories
+ * @param {boolean} forcePurge Whether to treat all deletion markers as purges (false by default)
  * @returns {object[]} Array of objects representing weeklog entries
  */
-function parseLog (buffer, categoryList) {
+function parseLog (buffer, categoryList, forcePurge = false) {
 
   const log = [];
 
@@ -28,7 +27,9 @@ function parseLog (buffer, categoryList) {
     for (let j = 0; j < 8; j ++) {
       steamid += BigInt(buffer[curr + j]) * BigInt(Math.pow(256, 7 - j));
     }
+    // convert the acquired number to a valid steamid string
     entry.steamid = steamid.toString();
+    while (entry.steamid.length < 17) entry.steamid = "0" + entry.steamid;
 
     // 1 byte - category index
     entry.category = categoryList[buffer[curr + 8]];
@@ -48,8 +49,13 @@ function parseLog (buffer, categoryList) {
       entry.timestamp += buffer[curr + 14 + j] * Math.pow(256, 2 - j);
     }
 
-    // this pattern marks the removal of an entry
-    if (entry.time === 0 && entry.portals === 0) {
+    // a time of zero logs the removal of the previous entry
+    if (entry.time === 0) {
+
+      // the portal count byte denotes whether to purge the run from the output entirely
+      const purge = entry.portals === 1;
+      // if we're not purging, just ignore this marker and do nothing
+      if (!forcePurge && !purge) continue;
 
       for (let j = log.length - 1; j >= 0; j --) {
         // look for the last run by the same user in the same category and remove it
@@ -156,7 +162,7 @@ module.exports = async function (args, context = epochtal) {
         // Get timestamp of current entry
         let curr = 0;
         for (let j = 0; j < 3; j ++) {
-          curr += buffer[i + 14 + j] * Math.pow(256, 3 - j);
+          curr += buffer[i + 14 + j] * Math.pow(256, 2 - j);
         }
 
         if (curr === timestamp) {
@@ -189,7 +195,7 @@ module.exports = async function (args, context = epochtal) {
       // Grab current timestamp if not provided
       if (!entry.timestamp) {
         const start = await config(["get", "date"], context);
-        entry.timestamp = Math.floor((Date.now() - start) / 1000);
+        entry.timestamp = Math.floor(Date.now() / 1000 - start);
       }
 
       // Ensure all fields are provided
@@ -211,6 +217,7 @@ module.exports = async function (args, context = epochtal) {
     case "reconstruct": {
 
       const categoryList = await categories(["list"], context);
+      const categoryData = {};
       const date = (await config(["get", "date"], context));
       const buffer = new Uint8Array(await file.arrayBuffer());
 
@@ -221,13 +228,17 @@ module.exports = async function (args, context = epochtal) {
       const lb = {};
       for (let i = 0; i < categoryList.length; i ++) {
         lb[categoryList[i]] = [];
+        categoryData[categoryList[i]] = await categories(["get", categoryList[i]], context);
       }
 
       // Reconstruct each entry into the leaderboard in reverse chronological order
       for (let i = log.length - 1; i >= 0; i --) {
 
-        // Skip if previous entry was already added
         const curr = log[i];
+
+        // Skip if this is a softly removed run
+        if (curr.time === 0 && curr.portals === 0) continue;
+        // Skip if previous entry was already added
         if (lb[curr.category].find(entry => entry.steamid === curr.steamid)) continue;
 
         const newRun = {
@@ -240,12 +251,8 @@ module.exports = async function (args, context = epochtal) {
 
         let inserted = false;
 
-        // > The weeklog doesn't contain category data, so we don't know if a category is based in portals
-        // > or not. Therefore, unfortunately, 'lp' is hardcoded to be least portals
-        // - PancakeTAS
-
-        // Insert 'lp' data into the leaderboard
-        if (curr.category === "lp") {
+        // Insert portals-first run into the leaderboard
+        if (categoryData[curr.category].portals) {
 
           newRun.segmented = false;
 

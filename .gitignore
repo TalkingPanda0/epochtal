@@ -179,10 +179,13 @@ data/
 secrets/
 bin/
 config.json
-.tmp
 
 # Bun lockfile
 bun.lockb
 
 # External software
 bin
+
+# Visual Studio Code
+.vscode/*
+!.vscode/launch.json

@@ -120,7 +120,7 @@ async function buildFiles (context) {
   fs.mkdirSync(`${portal2}/maps/workshop`);
 
   // Download workshop map(s)
-  let mapPaths = [];
+  const mapPaths = [];
   if (!Array.isArray(week.map)) {
 
     const map = await getMap(week.map.id);
@@ -159,35 +159,39 @@ async function buildFiles (context) {
   // Write current week number to epochtal_week.cfg as an svar
   await Bun.write(`${portal2}/cfg/epochtal_week.cfg`, `svar_set epochtal_week ${week.number}`);
   // Write the server's address to allow for API access from Spplice JS interface
-  await Bun.write(`${portal2}/address.txt`, `${gconfig.tls ? "https" : "http"}://${gconfig.domain}`);
+  await Bun.write(`${portal2}/address.txt`, `${gconfig.https ? "https" : "http"}://${gconfig.domain}`);
 
-  // Create checksums for all created files
-  let checksums = "\n// Epochtal files";
+  // Create checksums for all created files if checksum list output paths exist
+  if (context.file.mdp) {
 
-  const files = fs.readdirSync(portal2, { recursive: true });
-  const checkExtensions = ["nut", "vpk", "cfg"];
+    let checksums = "\n// Epochtal files";
 
-  for (let i = 0; i < files.length; i ++) {
+    const files = fs.readdirSync(portal2, { recursive: true });
+    const checkExtensions = ["nut", "vpk", "cfg"];
 
-    const file = files[i];
-    if (!fs.lstatSync(`${portal2}/${file}`).isFile()) continue;
+    for (let i = 0; i < files.length; i ++) {
 
-    const extension = file.split(".").pop();
-    if (!(checkExtensions.find(c => c === extension))) continue;
+      const file = files[i];
+      if (!fs.lstatSync(`${portal2}/${file}`).isFile()) continue;
 
-    const checksum = await getChecksum(`${portal2}/${file}`);
-    checksums += `\n/portal2_tempcontent/${file} ${checksum}`;
+      const extension = file.split(".").pop();
+      if (!(checkExtensions.find(c => c === extension))) continue;
+
+      const checksum = await getChecksum(`${portal2}/${file}`);
+      checksums += `\n/portal2_tempcontent/${file} ${checksum}`;
+
+    }
+
+    // Write additional checksums to MDP whitelist
+    const filesum = await Bun.file(`./defaults/filesum_whitelist.txt`).text();
+    await Bun.write(context.file.mdp.filesums, filesum + checksums);
+
+    // Write SAR checksums to MDP whitelist
+    let sarsums = "";
+    for (let i = 0; i < sar.length; i ++) sarsums += sar[i].crc32 + "\n";
+    await Bun.write(context.file.mdp.sarsums, sarsums);
 
   }
-
-  // Write additional checksums to MDP whitelist
-  const filesum = await Bun.file(`./defaults/filesum_whitelist.txt`).text();
-  await Bun.write(`${gconfig.bindir}/mdp-json/filesum_whitelist.txt`, filesum + checksums);
-
-  // Write SAR checksums to MDP whitelist
-  let sarsums = "";
-  for (let i = 0; i < sar.length; i ++) sarsums += sar[i].crc32 + "\n";
-  await Bun.write(`${gconfig.bindir}/mdp-json/sar_whitelist.txt`, sarsums);
 
   // Prepare map(s) BSP for simulated co-op
   for (let i = 0; i < mapPaths.length; i ++) {

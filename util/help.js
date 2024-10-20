@@ -31,7 +31,8 @@ Time is provided in seconds, 3 by default.
 Commands:
     list -- lists all categories with leaderboards
     get -- lists all runs in the given category
-    remove STEAMID -- removes a player's run from the given category
+    remove STEAMID PURGE -- removes a player's run from the given category
+        PURGE -- boolean flag - whether to purge the run from the weeklog
     add STEAMID TIME NOTE [PORTALS SEGMENTED] -- adds a run to the given category
         STEAMID -- player's steamid
         TIME -- run time in ticks
@@ -253,7 +254,7 @@ Commands:
 
   // List all available utilities if no valid utility name is provided
   const files = readdirSync(__dirname);
-  let list = [];
+  const list = [];
 
   for (let i = 0; i < files.length; i ++) {
     if (!files[i].endsWith(".js")) continue;

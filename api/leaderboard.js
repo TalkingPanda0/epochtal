@@ -20,10 +20,10 @@ const api_users = require("./users.js");
 function ticksToString (t) {
 
   // Convert ticks to hours, minutes, and seconds
-  let output = "",
-      hrs = Math.floor(t / 216000)
-      min = Math.floor(t / 3600),
-      sec = t % 3600 / 60;
+  let output = "";
+  const hrs = Math.floor(t / 216000),
+    min = Math.floor(t / 3600),
+    sec = t % 3600 / 60;
 
   // Format the time string
   if (hrs !== 0) output += `${hrs}:${min % 60 < 10 ? "0" : ""}${min % 60}:`;
@@ -62,7 +62,8 @@ async function discordUpdate (steamid, category) {
   output += ` submitted a new run to "${currCategory.title}" with a time of \`${time}\``;
 
   if (currCategory.portals) {
-    output += ` (${run.portals} portals)`;
+    const label = currCategory.portals === true ? "portal" : currCategory.portals;
+    output += ` (${run.portals} ${label}${run.portals === 1 ? "" : "s"})`;
   }
 
   if (currCategory.points) {
@@ -104,7 +105,7 @@ module.exports = async function (args, request) {
 
     case "get": {
 
-      // Return the current leaderboard json
+      // Return the leaderboard of all categories
       return epochtal.data.leaderboard;
 
     }
@@ -165,7 +166,8 @@ module.exports = async function (args, request) {
       }
 
       // Parse the demo file
-      const data = await demo(["parse", path]);
+      const portalOverride = categoryData.portals === true ? false : categoryData.portals;
+      const data = await demo(["parse", path, portalOverride]);
 
       // Fail if the player's steamid does not match the demo's steamid
       if (user.steamid !== data.steamid) {
@@ -282,7 +284,8 @@ module.exports = async function (args, request) {
       const user = await api_users(["whoami"], request);
       if (!user) return "ERR_LOGIN";
 
-      await leaderboard(["remove", category, user.steamid]);
+      // Remove the run, but don't purge from weeklog
+      await leaderboard(["remove", category, user.steamid, false]);
 
       // Return SUCCESS to the user
       return "SUCCESS";

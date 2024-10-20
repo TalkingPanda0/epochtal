@@ -1,9 +1,8 @@
 const UtilError = require("./error.js");
 const UtilPrint = require("./print.js");
 
-const https = require("http");
+const https = require("https");
 const fs = require("node:fs");
-const keys = require(`${gconfig.secretsdir}/keys.js`);
 const weights = require(`${gconfig.secretsdir}/weights.js`);
 
 const weeklog = require("./weeklog.js");
@@ -23,13 +22,13 @@ const STEAM_API = "https://api.steampowered.com";
 async function getWorkshopData (mapid) {
 
   // Fetch the workshop data for the map
-  const detailsRequest = await fetch(`${STEAM_API}/IPublishedFileService/GetDetails/v1/?key=${keys.steam}&publishedfileids[0]=${mapid}&includeadditionalpreviews=true`);
-  if (detailsRequest.status !== 200) throw new UtilError("ERR_STEAMAPI", args, context);
+  const detailsRequest = await fetch(`${STEAM_API}/IPublishedFileService/GetDetails/v1/?key=${process.env.STEAM_API_KEY}&publishedfileids[0]=${mapid}&includeadditionalpreviews=true`);
+  if (detailsRequest.status !== 200) return "ERR_STEAMAPI";
 
   // Parse the response, throwing an error if the data is invalid
   const detailsData = await detailsRequest.json();
   if (!("response" in detailsData && "publishedfiledetails" in detailsData.response)) {
-    throw new UtilError("ERR_STEAMAPI", args, context);
+    return "ERR_STEAMAPI";
   }
   const data = detailsData.response.publishedfiledetails[0];
 
@@ -53,15 +52,15 @@ async function downloadEntityLump (mapid) {
   if (typeof data === "string") return data;
 
   // Ensure the map is a Portal 2 map
-  if (data.file_url === undefined) return "";
-  if (data.consumer_appid !== 620) return "";
+  if (data.file_url === undefined) return "ERR_BADMAP";
+  if (data.consumer_appid !== 620) return "ERR_BADMAP";
 
   // Fetch the BSP file for the map
   const request = await fetch(data.file_url);
-  if (request.status !== 200) throw new UtilError("ERR_STEAMAPI", args, context);
+  if (request.status !== 200) return "ERR_STEAMAPI";
 
   // Read the entity lump from the BSP file
-  return await (new Promise(function (resolve, reject) {
+  return await (new Promise(function (resolve, _reject) {
     https.request(data.file_url, function (response) {
 
       // ident, version, lumps[64] ( offset, length, version, cc ), map_revision
@@ -82,7 +81,7 @@ async function downloadEntityLump (mapid) {
 
           // header is fully read, grab offset and length for entities lump (0)
           if (bytes_read >= header_size) {
-            let buffer = Buffer.concat(header);
+            const buffer = Buffer.concat(header);
             entities_offset = buffer.readUInt32LE(4 + 4);
             entities_size = buffer.readUInt32LE(4 + 4 + 4);
 
@@ -115,7 +114,7 @@ async function downloadEntityLump (mapid) {
 
           // entities lump is fully read
           if (bytes_read >= entities_offset + entities_size) {
-            let buffer = Buffer.concat(entities).subarray(0, entities_size);
+            const buffer = Buffer.concat(entities).subarray(0, entities_size);
 
             // resolve promise with entities lump
             const outputString = buffer.toString();
@@ -133,10 +132,10 @@ async function downloadEntityLump (mapid) {
         }
       });
 
-      // if the response ended and we have no entities lump, resolve with empty string
+      // if the response ended and we have no entities lump, resolve with ERR_BADMAP
       response.on("end", function () {
         setTimeout(function () {
-          resolve("");
+          resolve("ERR_BADMAP");
         }, 1000);
       });
 
@@ -372,17 +371,17 @@ module.exports = async function (args, context = epochtal) {
 
       // Additional points for Portal 2 and Authoring Tools playtime
       // This tends to get rate-limited, so we try a maximum of 10 times with a linearly increasing delay
-      let gamesList, failedTries = 0;
+      let gamesList = 0;
       for (let tries = 0; tries <= 10; tries ++) {
 
-        const response = await fetch(`${STEAM_API}/IPlayerService/GetOwnedGames/v1/?key=${keys.steam}&steamid=${data.creator}`);
+        const response = await fetch(`${STEAM_API}/IPlayerService/GetOwnedGames/v1/?key=${process.env.STEAM_API_KEY}&steamid=${data.creator}`);
 
         if (response.status === 200) {
           gamesList = (await response.json()).response.games;
           break;
         }
 
-        await new Promise(function (resolve) { setTimeout(resolve, tries * 500) });
+        await new Promise(function (resolve) { setTimeout(resolve, tries * 500); });
         continue;
 
       }
@@ -407,14 +406,14 @@ module.exports = async function (args, context = epochtal) {
       let userMaps;
       for (let tries = 0; tries <= 10; tries ++) {
 
-        const response = await fetch(`${STEAM_API}/IPublishedFileService/GetUserFileCount/v1/?key=${keys.steam}&steamid=${data.creator}&appid=620&totalonly=true`);
+        const response = await fetch(`${STEAM_API}/IPublishedFileService/GetUserFileCount/v1/?key=${process.env.STEAM_API_KEY}&steamid=${data.creator}&appid=620&totalonly=true`);
 
         if (response.status === 200) {
           userMaps = (await response.json()).response.total;
           break;
         }
 
-        await new Promise(function (resolve) { setTimeout(resolve, tries * 500) });
+        await new Promise(function (resolve) { setTimeout(resolve, tries * 500); });
         continue;
 
       }
@@ -437,7 +436,7 @@ module.exports = async function (args, context = epochtal) {
 
       // Convert entity lump to an object density graph
       const entityLump = await downloadEntityLump(mapid);
-      if (entityLump === "") throw new UtilError("ERR_MAPID", args, context);
+      if (entityLump.startsWith("ERR_")) throw new UtilError(entityLump, args, context);
 
       const entities = parseLump(entityLump);
       const density = calculateDensities(entities);
@@ -450,8 +449,6 @@ module.exports = async function (args, context = epochtal) {
       let score = 0, totalDensityScore = 0;
 
       for (const ent in density) {
-
-        let currScore = 0;
 
         if (!(ent in graphs)) continue;
         const { scores, bounds } = graphs[ent];
@@ -539,7 +536,8 @@ module.exports = async function (args, context = epochtal) {
 
         const currLog = await weeklog(["read"], archiveContext);
 
-        let submissions = 0, players = [];
+        let submissions = 0;
+        const players = [];
         for (let i = 0; i < currLog.length; i ++) {
           if (currLog[i].category !== "main") continue;
           if (!players.includes(currLog[i].steamid)) players.push(currLog[i].steamid);
@@ -555,7 +553,7 @@ module.exports = async function (args, context = epochtal) {
         } else {
           // If a cache was not found, try to download the BSP and calculate graphs
           const entityLump = await downloadEntityLump(archiveContext.data.week.map.id);
-          if (entityLump === "") continue;
+          if (entityLump.startsWith("ERR_")) continue; // If we failed, too bad.
 
           const entities = parseLump(entityLump);
           mapDensity = calculateDensities(entities);
@@ -696,7 +694,7 @@ module.exports = async function (args, context = epochtal) {
 
         return result;
 
-      }
+      };
 
       for (const name in output) {
         output[name] = {
